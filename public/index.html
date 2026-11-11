@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>BLOCKWORLD ONLINE</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+</head>
+<body>
+<div id="menu" class="overlay">
+  <div class="panel">
+    <div class="logo">BLOCK<span>WORLD</span></div>
+    <p class="sub">ONLINE SURVIVAL WORLD</p>
+    <input id="nickname" maxlength="16" placeholder="닉네임 입력" value="Player">
+    <button id="play">월드 입장</button>
+    <p class="hint">같은 서버 주소로 접속한 플레이어와 함께 플레이합니다.</p>
+  </div>
+</div>
+<div id="crosshair">+</div>
+<div id="hud">
+  <div class="topline"><span id="worldStatus">서버 연결 중...</span><span id="online">온라인 1명</span></div>
+  <div class="vitals"><div class="hearts">❤ ❤ ❤ ❤ ❤ ❤ ❤ ❤ ❤ ❤</div><div class="food">● ● ● ● ● ● ● ● ● ●</div></div>
+  <div id="hotbar"></div>
+  <div class="help">WASD 이동 · Space 점프 · 마우스 시점 · 좌클릭 파괴 · 우클릭 설치 · E 인벤토리 · Enter 채팅</div>
+</div>
+<div id="inventory" class="overlay hidden">
+  <div class="panel invpanel"><h2>인벤토리</h2><div id="invgrid"></div><button id="closeInv">닫기 (E)</button></div>
+</div>
+<div id="chatbox"><div id="messages"></div><input id="chatInput" maxlength="120" placeholder="메시지 입력 후 Enter"></div>
+<div id="mobile">
+  <div class="mobile-left"><button data-key="KeyW">▲</button><div><button data-key="KeyA">◀</button><button data-key="KeyS">▼</button><button data-key="KeyD">▶</button></div></div>
+  <div class="mobile-right"><button id="jumpBtn">점프</button><button id="breakBtn">파괴</button><button id="placeBtn">설치</button></div>
+</div>
+<script type="module" src="game.js"></script>
+</body>
+</html>
