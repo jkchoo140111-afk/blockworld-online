@@ -4,7 +4,9 @@ import { PointerLockControls } from "three/addons/controls/PointerLockControls.j
 const $ = s => document.querySelector(s);
 const menu=$("#menu"), inventory=$("#inventory"), chatInput=$("#chatInput");
 let scene,camera,renderer,controls,ws,myId=null,joined=false;
-let yaw=0, velocityY=0, onGround=false, lastMove=0, selected=0;
+let velocityY=0, onGround=false, lastMove=0, selected=0;
+const EYE_HEIGHT=1.62, PLAYER_RADIUS=0.28, WALK_SPEED=5.5, JUMP_SPEED=7.2, GRAVITY=20;
+const clock=new THREE.Clock();
 const keys={}, blockMeshes=new Map(), remote=new Map(), inventoryItems={grass:24,dirt:16,stone:8,wood:4,planks:0,sand:0};
 const slots=["grass","dirt","stone","wood","planks","sand","leaves","grass","dirt"];
 const colors={grass:0x65a943,dirt:0x80502e,stone:0x85898d,wood:0x76502e,planks:0xb58a4e,leaves:0x367b35,sand:0xd8c58b};
@@ -16,7 +18,13 @@ const blockMaterials=Object.fromEntries(Object.entries(colors).map(([name,color]
 let raycaster=new THREE.Raycaster();
 let touchLook=null;
 let moveForward=false,moveRight=false;
-const playerHeight=1.7;
+const playerHeight=EYE_HEIGHT;
+let handSwingTimer=null;
+function swingHand(){
+  const hand=$("#hand"); if(!hand)return;
+  hand.classList.remove("swing"); void hand.offsetWidth; hand.classList.add("swing");
+  clearTimeout(handSwingTimer); handSwingTimer=setTimeout(()=>hand.classList.remove("swing"),330);
+}
 
 function terrainHeight(x,z){return Math.floor(3+Math.sin(x*.16)*2+Math.cos(z*.13)*2+Math.sin((x+z)*.08)*1.4);}
 function addBlock(x,y,z,type,send=true){
@@ -48,7 +56,7 @@ function makeTree(x,y,z){
 }
 function init3D(){
   scene=new THREE.Scene();scene.background=new THREE.Color(0x83bafa);scene.fog=new THREE.Fog(0x83bafa,35,95);
-  camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,.1,180);camera.position.set(0,8,8);
+  camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,.1,180);camera.position.set(0,terrainHeight(0,8)+1+EYE_HEIGHT,8);
   renderer=new THREE.WebGLRenderer({antialias:false});renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,1.7));renderer.shadowMap.enabled=true;document.body.appendChild(renderer.domElement);
   controls=new PointerLockControls(camera,renderer.domElement);
   scene.add(new THREE.HemisphereLight(0xd7eaff,0x65704c,2));
@@ -57,7 +65,9 @@ function init3D(){
   water.rotation.x=-Math.PI/2;water.position.y=1.1;scene.add(water);
   generateWorld();
   addEventListener("resize",()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
-  renderer.domElement.addEventListener("click",()=>{if(joined&&!inventory.classList.contains("hidden")===false&&!chatInput.matches(":focus"))controls.lock();});
+  renderer.domElement.addEventListener("click",()=>{
+    if(joined && inventory.classList.contains("hidden") && !chatInput.matches(":focus") && matchMedia("(pointer:fine)").matches && !controls.isLocked) controls.lock();
+  });
   controls.addEventListener("lock",()=>{});
   controls.addEventListener("unlock",()=>{});
   renderer.domElement.addEventListener("touchstart",e=>{
@@ -129,42 +139,93 @@ function updateHotbar(){
 function updateInventory(){
   $("#invgrid").innerHTML=Object.entries(inventoryItems).map(([t,n])=>`<div class="invslot">${emojis[t]||"▪"}<small>${n}</small></div>`).join("");
 }
+function getGroundTop(x,z){
+  const bx=Math.floor(x), bz=Math.floor(z);
+  let top=0;
+  // 실제 남아 있는 블록을 바닥으로 사용해 파낸 구멍에서도 허공을 걷지 않게 합니다.
+  for(let y=0;y<=64;y++) if(world.has(key(bx,y,bz))) top=y+1;
+  return top;
+}
+function isBlocked(x,cameraY,z){
+  const feet=cameraY-EYE_HEIGHT;
+  const head=cameraY-0.12;
+  const samples=[
+    [x-PLAYER_RADIUS,z-PLAYER_RADIUS],[x+PLAYER_RADIUS,z-PLAYER_RADIUS],
+    [x-PLAYER_RADIUS,z+PLAYER_RADIUS],[x+PLAYER_RADIUS,z+PLAYER_RADIUS],
+    [x,z]
+  ];
+  for(const [sx,sz] of samples){
+    const bx=Math.floor(sx),bz=Math.floor(sz);
+    const minY=Math.floor(feet+0.05),maxY=Math.floor(head-0.001);
+    for(let by=minY;by<=maxY;by++) if(world.has(key(bx,by,bz))) return true;
+  }
+  return false;
+}
 function animate(){
   requestAnimationFrame(animate);
-  if(joined&&controls.isLocked){
-    const dir=new THREE.Vector3();const forward=new THREE.Vector3();camera.getWorldDirection(forward);forward.y=0;forward.normalize();
+  const dt=Math.min(clock.getDelta(),0.05);
+  const canMove=joined && inventory.classList.contains("hidden") && !chatInput.matches(":focus");
+  if(canMove){
+    const forward=new THREE.Vector3();
+    camera.getWorldDirection(forward); forward.y=0; forward.normalize();
     const right=new THREE.Vector3().crossVectors(forward,new THREE.Vector3(0,1,0)).normalize();
-    const speed=5.5*(keys.ShiftLeft?1.45:1);
-    if(keys.KeyW)dir.add(forward);if(keys.KeyS)dir.sub(forward);if(keys.KeyD)dir.add(right);if(keys.KeyA)dir.sub(right);
-    if(dir.lengthSq())dir.normalize().multiplyScalar(speed*.016);
-    const nx=camera.position.x+dir.x,nz=camera.position.z+dir.z;
-    const ground=terrainHeight(Math.round(nx),Math.round(nz))+1.65;
-    if(!isBlocked(nx,camera.position.y,nz))camera.position.x=nx;
-    if(!isBlocked(camera.position.x,camera.position.y,nz))camera.position.z=nz;
-    velocityY-=.022;camera.position.y+=velocityY;
-    if(camera.position.y<ground){camera.position.y=ground;velocityY=0;onGround=true;}else onGround=false;
-    if(keys.Space&&onGround){velocityY=.28;onGround=false;}
-    const now=performance.now();if(now-lastMove>65&&ws?.readyState===1){lastMove=now;const e=new THREE.Euler().setFromQuaternion(camera.quaternion,"YXZ");ws.send(JSON.stringify({type:"move",x:camera.position.x,y:camera.position.y-1.65,z:camera.position.z,yaw:e.y}));}
+    const dir=new THREE.Vector3();
+    if(keys.KeyW)dir.add(forward); if(keys.KeyS)dir.sub(forward);
+    if(keys.KeyD)dir.add(right); if(keys.KeyA)dir.sub(right);
+    const speed=WALK_SPEED*(keys.ShiftLeft||keys.ShiftRight?1.35:1);
+    if(dir.lengthSq()>0){
+      dir.normalize().multiplyScalar(speed*dt);
+      const currentGround=getGroundTop(camera.position.x,camera.position.z)+EYE_HEIGHT;
+      const tryAxis=(nx,nz)=>{
+        const nextGround=getGroundTop(nx,nz)+EYE_HEIGHT;
+        let candidateY=camera.position.y;
+        const rise=nextGround-currentGround;
+        // 한 블록 높이까지는 자연스럽게 올라가고, 그보다 높은 벽은 막습니다.
+        if(rise>0.02){
+          if(rise>1.05) return false;
+          candidateY=Math.max(candidateY,nextGround);
+        }
+        if(isBlocked(nx,candidateY,nz)) return false;
+        camera.position.x=nx; camera.position.z=nz;
+        if(candidateY>camera.position.y){camera.position.y=candidateY;velocityY=0;onGround=true;}
+        return true;
+      };
+      tryAxis(camera.position.x+dir.x,camera.position.z);
+      tryAxis(camera.position.x,camera.position.z+dir.z);
+    }
+    // 중력과 점프는 이동 입력과 독립적으로 처리합니다.
+    const groundEye=getGroundTop(camera.position.x,camera.position.z)+EYE_HEIGHT;
+    if(keys.Space && onGround){velocityY=JUMP_SPEED;onGround=false;}
+    velocityY-=GRAVITY*dt;
+    const nextY=camera.position.y+velocityY*dt;
+    if(nextY<=groundEye){camera.position.y=groundEye;velocityY=0;onGround=true;}
+    else if(!isBlocked(camera.position.x,nextY,camera.position.z)){camera.position.y=nextY;onGround=false;}
+    else {velocityY=0;onGround=true;}
+    const now=performance.now();
+    if(now-lastMove>65&&ws?.readyState===1){
+      lastMove=now; const e=new THREE.Euler().setFromQuaternion(camera.quaternion,"YXZ");
+      ws.send(JSON.stringify({type:"move",x:camera.position.x,y:camera.position.y-EYE_HEIGHT,z:camera.position.z,yaw:e.y}));
+    }
   }
   renderer.render(scene,camera);
 }
-function isBlocked(x,y,z){const bx=Math.floor(x),bz=Math.floor(z);for(let yy=Math.floor(y-1.6);yy<=Math.floor(y-.1);yy++)if(world.has(key(bx,yy,bz)))return true;return false;}
 
 $("#play").onclick=()=>{init3D();connect();joined=true;menu.classList.add("hidden");if(matchMedia("(pointer:fine)").matches)controls.lock();updateHotbar();};
 document.addEventListener("keydown",e=>{
+  if(joined && ["KeyW","KeyA","KeyS","KeyD","Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code) && !chatInput.matches(":focus")) e.preventDefault();
   if(e.code==="Enter"){if(chatInput.style.display==="block"){const text=chatInput.value.trim();if(text&&ws?.readyState===1)ws.send(JSON.stringify({type:"chat",text}));chatInput.value="";chatInput.style.display="none";chatInput.blur();}else{controls.unlock();chatInput.style.display="block";chatInput.focus();}return;}
   keys[e.code]=true;
   if(e.code==="KeyE"){inventory.classList.toggle("hidden");if(!inventory.classList.contains("hidden")){controls.unlock();updateInventory();}else if(matchMedia("(pointer:fine)").matches)controls.lock();}
   if(e.code.startsWith("Digit")){selected=Math.max(0,Math.min(8,Number(e.code.slice(5))-1));updateHotbar();}
 });
 document.addEventListener("keyup",e=>keys[e.code]=false);
-document.addEventListener("mousedown",e=>{if(!joined||!controls.isLocked)return;if(e.button===0)editBlock(false);if(e.button===2)editBlock(true);});
+document.addEventListener("mousedown",e=>{if(!joined||!inventory.classList.contains("hidden")||chatInput.matches(":focus"))return;if(e.button===0){swingHand();editBlock(false);}if(e.button===2){swingHand();editBlock(true);}});
 document.addEventListener("contextmenu",e=>e.preventDefault());
 $("#closeInv").onclick=()=>inventory.classList.add("hidden");
 document.querySelectorAll("[data-key]").forEach(b=>{
-  const code=b.dataset.key;b.addEventListener("touchstart",e=>{e.preventDefault();keys[code]=true;},{passive:false});b.addEventListener("touchend",()=>keys[code]=false);
+  const code=b.dataset.key;b.addEventListener("touchstart",e=>{e.preventDefault();keys[code]=true;},{passive:false});b.addEventListener("touchend",()=>keys[code]=false);b.addEventListener("touchcancel",()=>keys[code]=false);
 });
 $("#jumpBtn").addEventListener("touchstart",e=>{e.preventDefault();if(onGround)velocityY=.28;},{passive:false});
-$("#breakBtn").addEventListener("touchstart",e=>{e.preventDefault();editBlock(false);},{passive:false});
-$("#placeBtn").addEventListener("touchstart",e=>{e.preventDefault();editBlock(true);},{passive:false});
+$("#breakBtn").addEventListener("touchstart",e=>{e.preventDefault();swingHand();editBlock(false);},{passive:false});
+$("#placeBtn").addEventListener("touchstart",e=>{e.preventDefault();swingHand();editBlock(true);},{passive:false});
 $("#hotbar").addEventListener("click",e=>{const s=e.target.closest("[data-slot]");if(s){selected=Number(s.dataset.slot);updateHotbar();}});
